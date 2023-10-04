@@ -1,46 +1,53 @@
-import sys
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+import hashlib
 
-def verify_signature(file_name, public_key, signature_hex):
-    # Read the content of the file
-    with open(file_name, 'rb') as file:
-        file_data = file.read()
+def sha256_hash(filename):
+    sha256 = hashlib.sha256()
+    with open(filename, 'rb') as file:
+        while True:
+            data = file.read(65536)
+            if not data:
+                break
+            sha256.update(data)
+    return sha256.digest()
 
-    # Calculate the SHA-256 hash of the file
-    sha256_hash = hashes.Hash(hashes.SHA256())
-    sha256_hash.update(file_data)
-    hash_digest = sha256_hash.finalize()
+def modular_exponentiation(base, exponent, mod):
+    result = 1
+    base %= mod
+    while exponent > 0:
+        if exponent % 2 == 1:
+            result = (result * base) % mod
+        exponent //= 2
+        base = (base * base) % mod
+    return result
 
-    # Deserialize the public key
-    public_key_obj = serialization.load_pem_public_key(public_key)
+def verify_signature(filename, N, e, signature_hex):
+    # Step 1: Get SHA-256 hash of the file (as bytes)
+    hashed_data = int.from_bytes(sha256_hash(filename), 'big')
 
-    # Verify the signature
-    signature = bytes.fromhex(signature_hex)
-    try:
-        public_key_obj.verify(
-            signature,
-            hash_digest,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256()
-        )
+    # Step 2: Convert the hexadecimal signature to an integer
+    signature = int(signature_hex, 16)
+
+    # Step 3: Verify the signature using RSA verification
+    verified_signature = modular_exponentiation(signature, e, N)
+    expected_hash = hashed_data
+
+    # Step 4: Return accept if the signature is valid, reject otherwise
+    if verified_signature == expected_hash:
         return "accept"
-    except Exception:
+    else:
         return "reject"
 
 if __name__ == "__main__":
+    import sys
+
     if len(sys.argv) != 5:
-        print("Usage: python verifier.py <file_name> <public_key> <signature_hex>")
+        print("Usage: python verifier.py <filename> <N> <e> <signature_hex>")
         sys.exit(1)
 
-    file_name = sys.argv[1]
-    public_key = sys.argv[2]
-    signature_hex = sys.argv[3]
+    filename = sys.argv[1]
+    N = int(sys.argv[2])
+    e = int(sys.argv[3])
+    signature_hex = sys.argv[4]
 
-    result = verify_signature(file_name, public_key.encode(), signature_hex)
+    result = verify_signature(filename, N, e, signature_hex)
     print(result)

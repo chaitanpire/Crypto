@@ -1,55 +1,62 @@
-import sys
-import os
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+import hashlib
+import random
+import sympy
 
-def generate_key_and_signature(file_name):
-    # Read the content of the file
-    with open(file_name, 'rb') as file:
-        file_data = file.read()
+def sha256_hash(filename):
+    sha256 = hashlib.sha256()
+    with open(filename, 'rb') as file:
+        while True:
+            data = file.read(65536)
+            if not data:
+                break
+            sha256.update(data)
+    return sha256.digest()
 
-    # Calculate the SHA-256 hash of the file
-    sha256_hash = hashes.Hash(hashes.SHA256())
-    sha256_hash.update(file_data)
-    hash_digest = sha256_hash.finalize()
+def generate_random_semiprime(bits):
+    while True:
+        p = sympy.randprime(2**(bits-1), 2**bits)
+        q = sympy.randprime(2**(bits-1), 2**bits)
+        if p != q:
+            return p , q, p*q
 
-    # Generate a random semiprime N for RSA
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    public_key = private_key.public_key()
+def modular_inverse(a, m):
+    # Extended Euclidean Algorithm to compute the modular inverse of 'a' mod 'm'
+    m0, x0, x1 = m, 0, 1
+    while a > 1:
+        q = a // m
+        m, a = a % m, m
+        x0, x1 = x1 - q * x0, x0
+    return x1 if x1 >= 0 else x1 + m0
 
-    # Sign the hash using RSA digital signature
-    signature = private_key.sign(
-        hash_digest,
-        padding.PSS(
-            mgf=padding.MGF1(hashes.SHA256()),
-            salt_length=padding.PSS.MAX_LENGTH
-        ),
-        hashes.SHA256()
-    )
+def sign_file(filename):
+    # Step 1: Get SHA-256 hash of the file (as bytes)
+    hashed_data = int.from_bytes(sha256_hash(filename), 'big')
 
-    # Serialize public key
-    public_key_pem = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo
-    )
+    # Step 2: Create random semiprime N to be used in the RSA digital signature
+    p, q, N = generate_random_semiprime(2048)  # You can adjust the number of bits as needed
 
-    return (public_key_pem, signature)
+    # Step 3: Sign the hash using RSA digital signature with N and e = 65537
+    e = 65537
+    d  = pow(e, -1, (p-1)*(q-1))  # Compute the private key 'd'
+    d = int(d)
+    N = int(N)
+    print(p,q,d)
+    hashed_data = int(hashed_data)
+    signature = pow(hashed_data, d, N)
+
+    return (N, e), hex(signature)[2:]
 
 if __name__ == "__main__":
+    import sys
+
     if len(sys.argv) != 2:
-        print("Usage: python sign.py <file_name>")
+        print("Usage: python sign.py <filename>")
         sys.exit(1)
 
-    file_name = sys.argv[1]
+    filename = sys.argv[1]
+    key_pair, signature = sign_file(filename)
+    N, e = key_pair
 
-    if not os.path.isfile(file_name):
-        print(f"File '{file_name}' does not exist.")
-        sys.exit(1)
-
-    public_key, signature = generate_key_and_signature(file_name)
-    print("Public Key (N, e):")
-    print(public_key.decode())
-    print("Signature (in hex):")
-    print(signature.hex())
+    print("N:", N)
+    print("e:", e)
+    print("Signature:", signature)
